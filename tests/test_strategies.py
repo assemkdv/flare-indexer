@@ -51,3 +51,14 @@ def test_max_flare_multiple_flares_returns_max_flux():
     strategy = MaxFlareStrategy()
     flares = [_flare("C4.0"), _flare("X1.0"), _flare("M2.3")]
     assert strategy.label(flares) == 1e-4
+
+
+def test_max_flare_uses_numeric_not_lexical_goes_ordering():
+    # Regression guard against the legacy lab script's bug: it selects the
+    # "strongest" flare via a lexical string sort of goes_class, under which
+    # "M9.0" > "M10.0" (since '9' > '1' character-wise). MaxFlareStrategy
+    # must pick M10.0 as stronger, matching its actual numeric flux.
+    strategy = MaxFlareStrategy()
+    flares = [_flare("M9.0"), _flare("M10.0")]
+    assert strategy.label(flares) == 1e-4  # M10.0's flux, not M9.0's 9e-5
+    assert strategy.label(flares) > strategy.label([_flare("M9.0")])

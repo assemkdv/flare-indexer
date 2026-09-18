@@ -12,6 +12,7 @@ def test_public_names_are_accessible():
         "DatasetBuilder",
         "build_image_index_from_filenames",
         "adapt_goes_catalog",
+        "ImageIndexReport",
     }
 
     assert set(fidx.__all__) == expected

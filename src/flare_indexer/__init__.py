@@ -2,7 +2,7 @@ from .classifier import FlareClassifier, FluxConverter
 from .events import EventMatcher, FlareEvent
 from .strategies import BinaryThresholdStrategy, MaxFlareStrategy
 from .builder import DatasetBuilder
-from .loaders import build_image_index_from_filenames, adapt_goes_catalog
+from .loaders import build_image_index_from_filenames, adapt_goes_catalog, ImageIndexReport
 
 __all__ = [
     "FlareClassifier",
@@ -14,4 +14,5 @@ __all__ = [
     "DatasetBuilder",
     "build_image_index_from_filenames",
     "adapt_goes_catalog",
+    "ImageIndexReport",
 ]

@@ -1,6 +1,6 @@
 import pandas as pd
 from pathlib import Path
-from .events import EventMatcher, _normalize_active_region
+from .events import EventMatcher, _normalize_active_region, VALID_EVENT_TIMES, VALID_INTERVAL_MODES
 
 
 class DatasetBuilder:
@@ -31,6 +31,15 @@ class DatasetBuilder:
         specific active region each image (or, for sequences, each image in
         the sequence) is assigned to (requires an active_region column in
         the image index).
+    event_time : str
+        Which of a flare's timestamps EventMatcher checks against the
+        prediction window: "peak" (default, preserves original behavior)
+        or "start". See EventMatcher.query.
+    interval_mode : str
+        The prediction window's boundary convention: "left_closed"
+        (default, preserves original behavior) for
+        [t, t + prediction_window), or "right_closed" for
+        (t, t + prediction_window]. See EventMatcher.query.
     """
 
     VALID_TARGETS = {"full_disk", "active_region"}
@@ -43,6 +52,8 @@ class DatasetBuilder:
         stride=1,
         cadence_minutes=None,
         target="full_disk",
+        event_time="peak",
+        interval_mode="left_closed",
     ):
         if prediction_window <= 0:
             raise ValueError(f"prediction_window must be > 0, got {prediction_window}")
@@ -54,6 +65,10 @@ class DatasetBuilder:
             raise ValueError(f"cadence_minutes must be > 0, got {cadence_minutes}")
         if target not in self.VALID_TARGETS:
             raise ValueError(f"target must be one of {sorted(self.VALID_TARGETS)}, got {target!r}")
+        if event_time not in VALID_EVENT_TIMES:
+            raise ValueError(f"event_time must be one of {sorted(VALID_EVENT_TIMES)}, got {event_time!r}")
+        if interval_mode not in VALID_INTERVAL_MODES:
+            raise ValueError(f"interval_mode must be one of {sorted(VALID_INTERVAL_MODES)}, got {interval_mode!r}")
 
         self.prediction_window = prediction_window
         self.strategy = strategy
@@ -61,6 +76,8 @@ class DatasetBuilder:
         self.stride = stride
         self.cadence_minutes = cadence_minutes
         self.target = target
+        self.event_time = event_time
+        self.interval_mode = interval_mode
 
     def build(self, image_index_path: str | Path, event_catalog_path: str | Path) -> pd.DataFrame:
         """
@@ -122,7 +139,10 @@ class DatasetBuilder:
     def _build_single_image(self, index_df: pd.DataFrame, matcher: EventMatcher) -> pd.DataFrame:
         records = []
         for ts in index_df["timestamp"]:
-            flares = matcher.query(ts, self.prediction_window)
+            flares = matcher.query(
+                ts, self.prediction_window,
+                event_time=self.event_time, interval_mode=self.interval_mode,
+            )
             label = self.strategy.label(flares)
             records.append({"timestamp": ts, "label": label})
 
@@ -140,7 +160,10 @@ class DatasetBuilder:
                 # back to full-disk matching.
                 flares = []
             else:
-                flares = matcher.query(ts, self.prediction_window, active_region=active_region)
+                flares = matcher.query(
+                    ts, self.prediction_window, active_region=active_region,
+                    event_time=self.event_time, interval_mode=self.interval_mode,
+                )
             label = self.strategy.label(flares)
             records.append({"timestamp": ts, "label": label})
 
@@ -186,7 +209,10 @@ class DatasetBuilder:
 
             if not self._sequence_violates_cadence(window):
                 sequence_end = window[-1]
-                flares = matcher.query(sequence_end, self.prediction_window)
+                flares = matcher.query(
+                    sequence_end, self.prediction_window,
+                    event_time=self.event_time, interval_mode=self.interval_mode,
+                )
                 label = self.strategy.label(flares)
 
                 record = {
@@ -247,7 +273,10 @@ class DatasetBuilder:
                 if active_region is None:
                     flares = []
                 else:
-                    flares = matcher.query(sequence_end, self.prediction_window, active_region=active_region)
+                    flares = matcher.query(
+                        sequence_end, self.prediction_window, active_region=active_region,
+                        event_time=self.event_time, interval_mode=self.interval_mode,
+                    )
                 label = self.strategy.label(flares)
 
                 record = {

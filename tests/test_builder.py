@@ -881,6 +881,68 @@ def test_active_region_sequence_preserves_extra_columns(tmp_path):
     assert result.iloc[0]["active_region"] == "3559"
 
 
+# ── event_time / interval_mode configuration ─────────────────────────────
+
+
+def test_event_time_invalid_value_raises():
+    with pytest.raises(ValueError) as excinfo:
+        DatasetBuilder(prediction_window=24, strategy=BinaryThresholdStrategy(), event_time="middle")
+
+    assert "event_time" in str(excinfo.value)
+
+
+def test_interval_mode_invalid_value_raises():
+    with pytest.raises(ValueError) as excinfo:
+        DatasetBuilder(prediction_window=24, strategy=BinaryThresholdStrategy(), interval_mode="both_closed")
+
+    assert "interval_mode" in str(excinfo.value)
+
+
+def test_event_time_start_vs_peak_produce_different_labels(tmp_path):
+    # A flare that starts inside the window but peaks just after it closes.
+    catalog_path = tmp_path / "catalog.csv"
+    catalog_path.write_text(
+        "date,start,peak,end,class,active_region\n"
+        "2024-01-01,0830,0901,0905,M1.0,4456\n"
+    )
+    index_path = tmp_path / "index.csv"
+    index_path.write_text("timestamp\n2024-01-01T08:00:00\n")
+
+    peak_builder = DatasetBuilder(prediction_window=1, strategy=BinaryThresholdStrategy(), event_time="peak")
+    start_builder = DatasetBuilder(prediction_window=1, strategy=BinaryThresholdStrategy(), event_time="start")
+
+    peak_result = peak_builder.build(index_path, catalog_path)
+    start_result = start_builder.build(index_path, catalog_path)
+
+    # peak_time (09:01) falls outside [08:00, 09:00) -> 0.
+    # start_time (08:30) falls inside [08:00, 09:00) -> 1.
+    assert peak_result["label"].tolist() == [0]
+    assert start_result["label"].tolist() == [1]
+
+
+def test_interval_mode_right_closed_includes_far_boundary(tmp_path):
+    catalog_path = tmp_path / "catalog.csv"
+    catalog_path.write_text(
+        "date,start,peak,end,class,active_region\n"
+        "2024-01-01,0900,0900,0905,X1.0,4456\n"
+    )
+    index_path = tmp_path / "index.csv"
+    index_path.write_text("timestamp\n2024-01-01T08:00:00\n")
+
+    left_closed = DatasetBuilder(prediction_window=1, strategy=BinaryThresholdStrategy())
+    right_closed = DatasetBuilder(
+        prediction_window=1, strategy=BinaryThresholdStrategy(), interval_mode="right_closed"
+    )
+
+    left_result = left_closed.build(index_path, catalog_path)
+    right_result = right_closed.build(index_path, catalog_path)
+
+    # X1.0 peaks exactly at t + 1h (09:00): excluded by [t, t+1h), included
+    # by (t, t+1h].
+    assert left_result["label"].tolist() == [0]
+    assert right_result["label"].tolist() == [1]
+
+
 def test_full_disk_sequence_and_active_region_single_image_unchanged(tmp_path):
     # Regression guard: full-disk sequence mode and active-region
     # single-image mode must be untouched by this phase.

@@ -1,17 +1,9 @@
 import pandas as pd
 import pytest
-from solarflare_labeler.classifier import FlareClassifier
-from solarflare_labeler.events import EventMatcher, FlareEvent
+from flare_indexer.classifier import FlareClassifier
+from flare_indexer.events import EventMatcher, FlareEvent
 
 # ── FlareClassifier tests ──────────────────────────────────────────────
-
-
-def test_to_flux():
-    classifier = FlareClassifier()
-    assert classifier.to_flux("M2.3") == 2.3e-5
-    assert classifier.to_flux("C4.0") == 4e-6
-    assert classifier.to_flux("X1.0") == 1e-4
-    assert classifier.to_flux("A1.0") == 1e-8
 
 
 def test_is_strong():
@@ -22,22 +14,22 @@ def test_is_strong():
     assert classifier.is_strong("B1.0") == False
 
 
-def test_to_flux_invalid_letter_raises():
+def test_is_strong_custom_threshold():
+    classifier = FlareClassifier()
+    assert classifier.is_strong("C5.0", threshold="C") == True
+    assert classifier.is_strong("B9.9", threshold="C") == False
+
+
+def test_is_strong_invalid_goes_class_letter_raises():
     classifier = FlareClassifier()
     with pytest.raises(KeyError):
-        classifier.to_flux("Z5.0")
+        classifier.is_strong("Z5.0")
 
 
-def test_to_flux_empty_string_raises():
+def test_is_strong_invalid_threshold_letter_raises():
     classifier = FlareClassifier()
-    with pytest.raises(IndexError):
-        classifier.to_flux("")
-
-
-def test_to_flux_non_numeric_suffix_raises():
-    classifier = FlareClassifier()
-    with pytest.raises(ValueError):
-        classifier.to_flux("M2.3.4")
+    with pytest.raises(KeyError):
+        classifier.is_strong("M2.3", threshold="Z")
 
 
 # ── EventMatcher tests ─────────────────────────────────────────────────

@@ -1,7 +1,8 @@
-from .classifier import FlareClassifier
+from .classifier import FlareClassifier, FluxConverter
 from .events import FlareEvent
 
 _classifier = FlareClassifier()
+_flux_converter = FluxConverter()
 
 
 class BinaryThresholdStrategy:
@@ -20,4 +21,4 @@ class MaxFlareStrategy:
     def label(self, flares: list[FlareEvent]) -> float:
         if not flares:
             return 0.0
-        return max(_classifier.to_flux(f.goes_class) for f in flares)
+        return max(_flux_converter.to_flux(f.goes_class) for f in flares)

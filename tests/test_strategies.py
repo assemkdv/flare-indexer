@@ -1,6 +1,6 @@
 import pandas as pd
-from solarflare_labeler.strategies import BinaryThresholdStrategy, MaxFlareStrategy
-from solarflare_labeler.events import FlareEvent
+from flare_indexer.strategies import BinaryThresholdStrategy, MaxFlareStrategy
+from flare_indexer.events import FlareEvent
 
 
 def _flare(goes_class: str) -> FlareEvent:

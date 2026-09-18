@@ -1,6 +1,6 @@
 import pandas as pd
 import pytest
-from solarflare_labeler.events import EventMatcher
+from flare_indexer.events import EventMatcher
 
 
 def test_query_normalizes_missing_active_region_to_none():

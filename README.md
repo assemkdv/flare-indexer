@@ -1,4 +1,4 @@
-solarflare-labeler builds **labeled datasets for solar flare prediction**:
+flare-indexer builds **labeled datasets for solar flare prediction**:
 given solar image timestamps and a NOAA flare catalog, it looks forward in
 time from each image (or each sequence of images), checks whether a flare
 occurred within a configurable prediction window, and produces a
@@ -19,7 +19,7 @@ pip install .
 This package does not fetch or maintain flare data itself. Flare catalogs
 are produced by the companion [solar-event-scraper](https://github.com/assemkdv/solar-event-scraper)
 repository, which handles NOAA data acquisition, deduplication, and
-updates. `solarflare-labeler`'s job starts where the scraper's output ends:
+updates. `flare-indexer`'s job starts where the scraper's output ends:
 point `DatasetBuilder` at a scraper-produced catalog CSV and an image index
 CSV, and it does the labeling.
 
@@ -71,7 +71,7 @@ This is the exact schema produced by `solar-event-scraper`:
 Example row: `2024-01-23,0309,0331,0338,M5.1,3559`.
 
 `start`/`peak`/`end` are bare times-of-day with no date attached, so
-`solarflare-labeler` combines each one with the `date` column to build a
+`flare-indexer` combines each one with the `date` column to build a
 real timestamp — never parses them on their own (a bare `0331` parsed
 alone would be misread as a Unix timestamp near 1970-01-01, not 03:31).
 Malformed values (out-of-range hour/minute, non-numeric, missing) raise a
@@ -170,7 +170,7 @@ Both take the list of `FlareEvent`s returned by `EventMatcher.query()` and
 reduce it to a single label.
 
 ```python
-from solarflare_labeler import BinaryThresholdStrategy
+from flare_indexer import BinaryThresholdStrategy
 
 # Count C-class and above as positive instead of the M-class default
 strategy = BinaryThresholdStrategy(threshold="C")
@@ -182,7 +182,7 @@ strategy = BinaryThresholdStrategy(threshold="C")
 
 ```python
 import pandas as pd
-import solarflare_labeler as sfl
+import flare_indexer as fidx
 
 pd.DataFrame({
     "timestamp": pd.to_datetime(["2024-02-01T00:00:00", "2024-02-10T00:00:00"]),
@@ -197,7 +197,7 @@ pd.DataFrame({
     "active_region": [11111],
 }).to_csv("flare_catalog.csv", index=False)
 
-builder = sfl.DatasetBuilder(prediction_window=24, strategy=sfl.BinaryThresholdStrategy(threshold="C"))
+builder = fidx.DatasetBuilder(prediction_window=24, strategy=fidx.BinaryThresholdStrategy(threshold="C"))
 print(builder.build("image_index.csv", "flare_catalog.csv"))
 ```
 ```
@@ -215,9 +215,9 @@ pd.DataFrame({
     ]),
 }).to_csv("image_index.csv", index=False)
 
-builder = sfl.DatasetBuilder(
+builder = fidx.DatasetBuilder(
     prediction_window=1,
-    strategy=sfl.BinaryThresholdStrategy(threshold="C"),
+    strategy=fidx.BinaryThresholdStrategy(threshold="C"),
     sequence_length=3,
     stride=1,
     cadence_minutes=30,
@@ -249,8 +249,8 @@ pd.DataFrame({
     "active_region": [3559],
 }).to_csv("image_index.csv", index=False)
 
-builder = sfl.DatasetBuilder(
-    prediction_window=24, strategy=sfl.MaxFlareStrategy(), target="active_region"
+builder = fidx.DatasetBuilder(
+    prediction_window=24, strategy=fidx.MaxFlareStrategy(), target="active_region"
 )
 print(builder.build("image_index.csv", "flare_catalog.csv"))
 ```
@@ -273,9 +273,9 @@ pd.DataFrame({
     "active_region": [3559, 3559, 3559],
 }).to_csv("image_index.csv", index=False)
 
-builder = sfl.DatasetBuilder(
+builder = fidx.DatasetBuilder(
     prediction_window=1,
-    strategy=sfl.BinaryThresholdStrategy(),
+    strategy=fidx.BinaryThresholdStrategy(),
     target="active_region",
     sequence_length=3,
     stride=1,

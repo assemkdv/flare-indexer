@@ -2,9 +2,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from solarflare_labeler.builder import DatasetBuilder
-from solarflare_labeler.events import EventMatcher
-from solarflare_labeler.strategies import BinaryThresholdStrategy, MaxFlareStrategy
+from flare_indexer.builder import DatasetBuilder
+from flare_indexer.events import EventMatcher
+from flare_indexer.strategies import BinaryThresholdStrategy, MaxFlareStrategy
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 CATALOG_PATH = FIXTURES_DIR / "catalog.csv"

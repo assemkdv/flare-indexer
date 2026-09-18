@@ -1,24 +1,27 @@
-import solarflare_labeler as sfl
+import flare_indexer as fidx
 
 
 def test_public_names_are_accessible():
     expected = {
         "FlareClassifier",
+        "FluxConverter",
         "FlareEvent",
         "EventMatcher",
         "BinaryThresholdStrategy",
         "MaxFlareStrategy",
         "DatasetBuilder",
+        "build_image_index_from_filenames",
+        "adapt_goes_catalog",
     }
 
-    assert set(sfl.__all__) == expected
+    assert set(fidx.__all__) == expected
     for name in expected:
-        assert hasattr(sfl, name)
+        assert hasattr(fidx, name)
 
 
 def test_top_level_classes_are_usable():
-    strategy = sfl.BinaryThresholdStrategy()
+    strategy = fidx.BinaryThresholdStrategy()
     assert strategy.threshold == "M"
 
-    builder = sfl.DatasetBuilder(prediction_window=24, strategy=sfl.BinaryThresholdStrategy())
+    builder = fidx.DatasetBuilder(prediction_window=24, strategy=fidx.BinaryThresholdStrategy())
     assert builder.prediction_window == 24

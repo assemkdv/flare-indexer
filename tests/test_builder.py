@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
-from solarflare_labeler.builder import DatasetBuilder
-from solarflare_labeler.strategies import BinaryThresholdStrategy, MaxFlareStrategy
+from flare_indexer.builder import DatasetBuilder
+from flare_indexer.strategies import BinaryThresholdStrategy, MaxFlareStrategy
 
 
 def _write_valid_catalog(tmp_path):

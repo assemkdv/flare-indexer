@@ -44,6 +44,14 @@ image timestamp(s)
 [ DatasetBuilder ] -> repeats for every image or sequence, returns a table
 ```
 
+"Strategy" here is anything exposing a `label(flares) -> label` method.
+`BinaryThresholdStrategy` and `MaxFlareStrategy` (below) are two
+ready-to-use ones. Internally, both — and any custom pipeline built from
+`DatasetBuildingPipeline` — follow the same three-stage shape: extract
+events, reduce them to one value, assign a final label. See "Modular
+pipeline architecture" for the composable, inspectable form of this same
+computation.
+
 **`FluxConverter`** — converts flare strength text to a number. Flares are
 named with a letter + number ("M2.3", "X1.0"). Letters go A < B < C < M < X,
 and each step is 10x stronger (a log scale). `to_flux()` converts that text
@@ -434,6 +442,161 @@ from flare_indexer import BinaryThresholdStrategy
 
 # Count C-class and above as positive instead of the M-class default
 strategy = BinaryThresholdStrategy(threshold="C")
+```
+
+## Modular pipeline architecture
+
+`BinaryThresholdStrategy` and `MaxFlareStrategy` are convenient, but each
+bundles "reduce a list of flares to one value" and "turn that value into a
+label" into a single opaque `label()` call. `DatasetBuildingPipeline`
+splits that into three separate, independently callable, inspectable
+stages — the same computation, decomposed rather than replaced:
+
+```
+image/sequence reference time
+      |
+      v
+[ EventMatcher ]   -> extract_events()  -> list[FlareEvent]
+      |
+      v
+[ EventReducer ]   -> reduce_events()   -> a single reduced value
+      |
+      v
+[ LabelAssigner ]  -> assign_label()    -> the final label
+      |
+      v
+     label
+```
+
+This is a **scikit-learn-inspired modular composition** — small,
+swappable components joined by a simple method-per-stage contract — not a
+claim of scikit-learn estimator-API compatibility (no `fit`/`transform`,
+no `Pipeline` object from `sklearn`).
+
+- **`EventReducer`** — a `typing.Protocol` for anything with a
+  `reduce(events: list[FlareEvent])` method. `MaxFluxReducer` (the only
+  one provided so far) reduces to the numeric maximum flux, always via
+  `FluxConverter` — never by comparing `goes_class` strings lexically.
+  Returns `0.0` for an empty event list. Cumulative or other scientific
+  reducers can be added later as new classes implementing this same
+  `reduce()` method, with no changes to `DatasetBuilder` or
+  `DatasetBuildingPipeline` required.
+- **`LabelAssigner`** — a `typing.Protocol` for anything with an
+  `assign(reduced_value)` method. Two are provided:
+  - **`BinaryThresholdLabeler(threshold="M")`** — `1` if the reduced value
+    meets or exceeds the threshold's flux, else `0`. `threshold` may be a
+    plain letter (`"M"`) or a full GOES class with a number (`"C4.2"`).
+  - **`RegressionLabeler()`** — passes the reduced value through
+    unchanged, normalizing numeric scalar types (e.g. a numpy `float64`)
+    to plain Python `int`/`float`.
+- **`DatasetBuildingPipeline(reducer, labeler)`** — coordinates the three
+  stages. `reducer` and `labeler` can be the provided classes above or
+  **any custom, duck-typed object** exposing the matching method — no
+  base class or registration needed. A component missing its required
+  method raises a clear `TypeError` at pipeline construction time.
+
+### Full end-to-end pipeline example
+
+```python
+from flare_indexer import (
+    DatasetBuilder, DatasetBuildingPipeline, MaxFluxReducer, BinaryThresholdLabeler,
+)
+
+pipeline = DatasetBuildingPipeline(
+    reducer=MaxFluxReducer(),
+    labeler=BinaryThresholdLabeler("M"),
+)
+
+# A DatasetBuildingPipeline implements label(events), so it's a drop-in
+# `strategy=` for DatasetBuilder -- no DatasetBuilder changes needed.
+builder = DatasetBuilder(prediction_window=24, strategy=pipeline)
+result = builder.build("image_index.csv", "flare_catalog.csv")
+```
+
+### Stopping after event extraction
+
+```python
+from flare_indexer import EventMatcher
+import pandas as pd
+
+matcher = EventMatcher("flare_catalog.csv")
+events = pipeline.extract_events(
+    matcher, pd.Timestamp("2024-02-01"), prediction_window=24,
+)
+# Inspect the matched FlareEvents directly -- nothing has been reduced
+# or labeled yet.
+for event in events:
+    print(event.goes_class, event.peak_time)
+```
+
+### Stopping after reduction
+
+```python
+reduced = pipeline.reduce_events(events)
+print(reduced)  # the numeric maximum flux, e.g. 2.3e-05
+```
+
+### Running only label assignment on a previously reduced value
+
+```python
+label = pipeline.assign_label(reduced)
+```
+
+### All three stages at once, with every intermediate value preserved
+
+```python
+result = pipeline.run_one(matcher, pd.Timestamp("2024-02-01"), prediction_window=24)
+result.events          # list[FlareEvent]
+result.reduced_value   # the numeric maximum flux
+result.label            # the final label
+```
+
+`extract_events`, `reduce_events`, and `assign_label` never depend on one
+another having been called first, and a `DatasetBuildingPipeline` instance
+holds no mutable state between calls — each method's output depends only
+on its own explicit inputs, so a single pipeline instance is safe to
+reuse and share.
+
+### Custom reducer
+
+```python
+class CumulativeCountReducer:
+    """Not provided by the package -- an example of a fully custom reducer."""
+    def reduce(self, events):
+        return len(events)
+
+pipeline = DatasetBuildingPipeline(
+    reducer=CumulativeCountReducer(),
+    labeler=BinaryThresholdLabeler("M"),  # or any custom labeler
+)
+```
+
+### Custom labeler
+
+```python
+class ThreeLevelLabeler:
+    """Not provided by the package -- an example of a fully custom labeler."""
+    def assign(self, reduced_value):
+        if reduced_value == 0.0:
+            return "none"
+        return "major" if reduced_value >= 1e-5 else "minor"
+
+pipeline = DatasetBuildingPipeline(reducer=MaxFluxReducer(), labeler=ThreeLevelLabeler())
+```
+
+### Backward compatibility
+
+`BinaryThresholdStrategy` and `MaxFlareStrategy` still work exactly as
+before — internally, they now delegate to this same modular machinery
+(`MaxFluxReducer` + `BinaryThresholdLabeler`, and `MaxFluxReducer` +
+`RegressionLabeler`, respectively), so their numeric output is unchanged:
+
+```python
+from flare_indexer import BinaryThresholdStrategy, MaxFlareStrategy
+
+# Still works exactly as before.
+builder = DatasetBuilder(prediction_window=24, strategy=BinaryThresholdStrategy(threshold="M"))
+builder = DatasetBuilder(prediction_window=24, strategy=MaxFlareStrategy())
 ```
 
 ## Examples

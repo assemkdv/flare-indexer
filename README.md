@@ -9,16 +9,10 @@ ready-to-train table of image/sequence -> label pairs.
 Not yet published to PyPI. Install from source:
 
 ```bash
-git clone https://github.com/assemkdv/solarflare-labeler.git
-cd solarflare-labeler
+git clone https://github.com/assemkdv/flare-indexer.git
+cd flare-indexer
 pip install .
 ```
-
-> **Note:** the import package and PyPI distribution name are now
-> `flare_indexer` / `flare-indexer`, but the GitHub repository itself may
-> still be reachable only at the old `solarflare-labeler` URL above until
-> the remote repository is renamed too. If `git clone` with a
-> `flare-indexer` URL fails, use the URL shown here.
 
 ## Where the data comes from
 

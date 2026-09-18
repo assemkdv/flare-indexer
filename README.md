@@ -205,6 +205,13 @@ and the image-index side.
   The prediction reference time for a sequence is its **final** image's
   timestamp.
 
+This row-based interface (`sequence_length`/`stride`/`cadence_minutes`)
+groups images by *position* in the image index. There's also a **time-based**
+interface (`start`/`cadence`/`observation_window`/`sliding_window`) that
+groups images by an explicit timestamp grid instead — see "Time-based
+sequence generation" below. The two are mutually exclusive per
+`DatasetBuilder`.
+
 ## Output schemas
 
 | Mode | Columns |
@@ -216,7 +223,190 @@ and the image-index side.
 
 In sequence mode, any extra image-index column (e.g. `image_path`) is
 preserved as a list-valued column holding that field for every image in
-the sequence.
+the sequence. Time-based sequences (below) use the identical schemas,
+column for column.
+
+## Time-based sequence generation
+
+The row-based interface above groups images by *position*: `sequence_length=3`
+always means "the next 3 rows," whatever timestamps happen to be there. The
+time-based interface instead builds each sequence from an **explicit
+timestamp grid**, which is what makes it possible to safely downsample a
+finer-cadence image index (e.g. select an hourly cadence out of 30-minute
+source images) and to skip — rather than silently misalign — a sequence
+that's missing one of its required images.
+
+```python
+from flare_indexer import DatasetBuilder, BinaryThresholdStrategy
+
+builder = DatasetBuilder(
+    prediction_window=24,
+    strategy=BinaryThresholdStrategy(),
+    start="2014-01-01 00:00:00",   # optional -- defaults to the earliest image timestamp
+    cadence="1h",                  # spacing between images *within* a sequence
+    observation_window="6h",       # span covered by one sequence
+    sliding_window="3h",           # how far the next candidate's start moves
+)
+```
+
+Supplying any of `start`/`cadence`/`observation_window`/`sliding_window`
+activates time-based mode. In that mode, `cadence`, `observation_window`,
+and `sliding_window` are all required (`start` is the only optional one).
+**Explicitly mixing** row-based parameters (`sequence_length`/`stride`/
+`cadence_minutes`) with time-based ones raises `ValueError` — pick one
+mode per `DatasetBuilder`. All four accept any pandas-compatible duration
+(`"12min"`, `"1h"`, `datetime.timedelta(hours=1)`, `pd.Timedelta(...)`) or,
+for `start`, any pandas-compatible timestamp.
+
+### The observation window is half-open
+
+`observation_window` is a half-open interval `[sequence_start,
+sequence_start + observation_window)`. With `cadence="1h"` and
+`observation_window="6h"`, a sequence therefore contains exactly six
+images:
+
+```
+t, t+1h, t+2h, t+3h, t+4h, t+5h
+```
+
+**not** seven — `t + 6h` falls outside the interval's own right endpoint,
+exactly like the package's `[t, t+N hours)` prediction-window convention
+elsewhere. In general, `number_of_images = observation_window / cadence`,
+and both this and `slide_steps = sliding_window / cadence` must come out
+to exact positive integers — `observation_window` and `sliding_window`
+each must be an exact multiple of `cadence` (e.g. `cadence="1h"` with
+`observation_window="90min"` raises `ValueError`, since 90 minutes isn't a
+whole number of 1-hour steps).
+
+The next candidate sequence always starts at `sequence_start +
+sliding_window`, regardless of how many images the current one ended up
+with. Labels are always computed from the sequence's **final** image
+timestamp, exactly as in row-based sequence mode.
+
+### `start` semantics
+
+- **Omitted** (default) — the first candidate starts at the image index's
+  earliest timestamp.
+- **Supplied** — inclusive, and an image must exist at *exactly* that
+  timestamp. If it doesn't (whether your requested `start` falls before,
+  after, or simply doesn't align with the dataset), `build()` raises
+  `ValueError` rather than silently rounding to the nearest available
+  image.
+
+Candidate sequence starts are `start + k * sliding_window` for
+`k = 0, 1, 2, ...`, continuing for as long as the *final* required image
+timestamp of the candidate still falls within the image index's own
+timestamp range.
+
+### Source cadence inference and compatible downsampling
+
+`build()` infers the image index's own base cadence as the **mode** (most
+common value) of its sorted-unique timestamps' positive consecutive
+differences — not the smallest or largest gap, so a dataset with a handful
+of missing images or occasional larger gaps still infers the correct
+"normal" cadence. The requested `cadence` must be:
+
+1. Greater than or equal to the inferred source cadence (you can't request
+   images finer than what's actually there), and
+2. An exact integer multiple of it.
+
+So an hourly-cadence image index accepts `cadence="1h"` or `cadence="3h"`,
+but rejects `cadence="1min"` (finer than the source) and `cadence="90min"`
+(not a whole multiple). A 30-minute-cadence image index accepts
+`cadence="1h"` — each generated sequence then picks out only the
+on-the-hour rows (`00:00, 01:00, 02:00, ...`), never the `:30` rows in
+between; see the downsampling example below. If the image index has fewer
+than two unique timestamps, the base cadence can't be inferred at all and
+`build()` raises `ValueError`.
+
+### Missing images: skip, don't interpolate
+
+For each candidate start, the exact required timestamps
+(`candidate_start + i * cadence` for `i` in `0 .. number_of_images - 1`)
+are looked up directly in the image index. If **any** of them is missing,
+the **entire candidate is skipped** — never interpolated, never filled by
+repeating or substituting a neighboring image. Generation simply continues
+to the next candidate start; a later candidate with complete data is still
+emitted normally.
+
+### `SequenceBuildReport`
+
+`build(..., return_report=True)` returns `(DataFrame, SequenceBuildReport)`
+instead of just the `DataFrame` (the default, `return_report=False`,
+preserves the plain-`DataFrame` return exactly). The report carries
+`inferred_source_cadence`, `requested_cadence`, `observation_window`,
+`sliding_window`, `effective_start`, `total_candidate_sequences`,
+`emitted_sequences`, `skipped_sequences`, and samples of
+`skipped_sequence_starts`/`missing_timestamps` for diagnosing why a
+particular run emitted fewer sequences than expected. `return_report=True`
+is only meaningful in time-based mode; passing it in row-based or
+single-image mode raises `ValueError`.
+
+```python
+result, report = builder.build("image_index.csv", "flare_catalog.csv", return_report=True)
+print(report.inferred_source_cadence, report.emitted_sequences, report.skipped_sequences)
+```
+
+### Examples
+
+**1. Full-disk, time-based**
+
+```python
+import pandas as pd
+from flare_indexer import DatasetBuilder, BinaryThresholdStrategy
+
+pd.DataFrame({
+    "timestamp": pd.date_range("2024-01-01T00:00:00", periods=10, freq="1h"),
+}).to_csv("image_index.csv", index=False)
+
+builder = DatasetBuilder(
+    prediction_window=24,
+    strategy=BinaryThresholdStrategy(threshold="M"),
+    cadence="1h", observation_window="6h", sliding_window="3h",
+)
+result = builder.build("image_index.csv", "flare_catalog.csv")
+print(result[["sequence_start", "sequence_end", "n_images", "label"]])
+```
+
+**2. Active-region, time-based**
+
+```python
+pd.DataFrame({
+    "timestamp": pd.date_range("2024-01-01T08:00:00", periods=6, freq="1h"),
+    "active_region": ["3559"] * 6,
+}).to_csv("image_index.csv", index=False)
+
+builder = DatasetBuilder(
+    prediction_window=1,
+    strategy=BinaryThresholdStrategy(),
+    target="active_region",
+    cadence="1h", observation_window="6h", sliding_window="6h",
+)
+result = builder.build("image_index.csv", "flare_catalog.csv")
+print(result[["sequence_start", "sequence_end", "active_region", "label"]])
+```
+
+**3. Downsampling a 30-minute image index to an hourly cadence**
+
+```python
+pd.DataFrame({
+    "timestamp": pd.date_range("2024-01-01T00:00:00", periods=9, freq="30min"),
+}).to_csv("image_index.csv", index=False)
+
+builder = DatasetBuilder(
+    prediction_window=24,
+    strategy=BinaryThresholdStrategy(),
+    cadence="1h", observation_window="4h", sliding_window="4h",
+)
+result = builder.build("image_index.csv", "flare_catalog.csv")
+print(result.iloc[0]["timestamps"])
+```
+```
+[Timestamp('2024-01-01 00:00:00'), Timestamp('2024-01-01 01:00:00'),
+ Timestamp('2024-01-01 02:00:00'), Timestamp('2024-01-01 03:00:00')]
+```
+The `:30`-past-the-hour rows in the source data are never selected — only
+the on-the-hour timestamps that match the requested `cadence="1h"` grid.
 
 ## Labeling strategies
 

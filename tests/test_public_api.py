@@ -10,6 +10,7 @@ def test_public_names_are_accessible():
         "BinaryThresholdStrategy",
         "MaxFlareStrategy",
         "DatasetBuilder",
+        "SequenceBuildReport",
         "build_image_index_from_filenames",
         "adapt_goes_catalog",
         "ImageIndexReport",

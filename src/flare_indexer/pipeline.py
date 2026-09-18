@@ -45,8 +45,10 @@ class DatasetBuildingPipeline:
     Each method takes its inputs explicitly and returns its output
     directly -- none of them read or write any mutable state on the
     pipeline instance, so extract_events(), reduce_events(), and
-    assign_label() can be called in any combination, independently, and
-    a pipeline instance is safe to reuse and share.
+    assign_label() can be called in any combination, independently.
+    DatasetBuildingPipeline itself stores no per-call intermediate state;
+    reuse or concurrent sharing of an instance is safe when the supplied
+    reducer and labeler are themselves stateless or thread-safe.
 
     reducer and labeler may be any object exposing a callable `reduce`
     (EventReducer) or `assign` (LabelAssigner) method respectively --

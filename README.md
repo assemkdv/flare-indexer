@@ -552,12 +552,18 @@ result.label            # the final label
 ```
 
 `extract_events`, `reduce_events`, and `assign_label` never depend on one
-another having been called first, and a `DatasetBuildingPipeline` instance
-holds no mutable state between calls — each method's output depends only
-on its own explicit inputs, so a single pipeline instance is safe to
-reuse and share.
+another having been called first, and `DatasetBuildingPipeline` stores no
+per-call intermediate state. Reuse or concurrent sharing is safe when the
+supplied reducer and labeler are themselves stateless or thread-safe --
+the pipeline does not make a stateful or non-thread-safe reducer/labeler
+safe to share on its own.
 
 ### Custom reducer
+
+A custom reducer and the labeler it's paired with must agree on the
+meaning and units of the intermediate value -- here, a raw flare *count*,
+not a physical flux, so it's paired with a labeler that thresholds on a
+count rather than `BinaryThresholdLabeler` (which expects a GOES flux):
 
 ```python
 class CumulativeCountReducer:
@@ -565,9 +571,17 @@ class CumulativeCountReducer:
     def reduce(self, events):
         return len(events)
 
+class MinimumCountLabeler:
+    """Not provided by the package -- pairs with CumulativeCountReducer's count output."""
+    def __init__(self, minimum=1):
+        self.minimum = minimum
+
+    def assign(self, count):
+        return int(count >= self.minimum)
+
 pipeline = DatasetBuildingPipeline(
     reducer=CumulativeCountReducer(),
-    labeler=BinaryThresholdLabeler("M"),  # or any custom labeler
+    labeler=MinimumCountLabeler(minimum=2),
 )
 ```
 
